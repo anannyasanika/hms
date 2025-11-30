@@ -1,0 +1,343 @@
+# single_file_hms.py
+# A single-file multi-tenant HMS prototype implementing FR-1 (Hospital Self-Registration) and basic Login.
+
+from flask import Flask, redirect, url_for, render_template_string, request, flash, Blueprint
+from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import generate_password_hash, check_password_hash
+import uuid
+import os
+
+# ----------------------------------------------------
+# 1. Configuration 
+# ----------------------------------------------------
+class Config:
+    # Using SQLite for simplicity in this single-file example
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or 'sqlite:///hms_main.db'
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+    SECRET_KEY = os.environ.get('SECRET_KEY') or 'your_super_secret_key_change_me_in_production'
+    JWT_SECRET_KEY = "jwt-secret-key" 
+
+# ----------------------------------------------------
+# 2. Initialization & Blueprint Definition
+# ----------------------------------------------------
+db = SQLAlchemy()
+# Define Blueprint globally
+auth_bp = Blueprint('auth', _name_)
+
+# ----------------------------------------------------
+# 3. Database Models 
+# ----------------------------------------------------
+
+# Model for Hospital/Tenant (FR-1)
+class Hospital(db.Model):
+    _tablename_ = 'hospitals'
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = db.Column(db.String(100), nullable=False)
+    address = db.Column(db.String(255))
+    contact_details = db.Column(db.String(50))
+    license_number = db.Column(db.String(50), unique=True, nullable=False)
+    admin_email = db.Column(db.String(120), unique=True, nullable=False)
+    status = db.Column(db.String(20), default='PENDING', nullable=False) # Status flow: PENDING → VERIFIED → ACTIVE → SUSPENDED → INACTIVE
+
+# Model for Users (FR-6)
+class User(db.Model):
+    _tablename_ = 'users'
+    id = db.Column(db.Integer, primary_key=True)
+    hospital_id = db.Column(db.String(36), db.ForeignKey('hospitals.id'), nullable=False)
+    first_name = db.Column(db.String(50), nullable=False)
+    last_name = db.Column(db.String(50), nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(128))
+
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+
+# ----------------------------------------------------
+# 4. HTML Templates (Embedded)
+# ----------------------------------------------------
+
+# Use raw strings (r""") to embed the HTML
+REGISTER_HTML = r"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Hospital Self-Registration</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <div class="container my-5">
+        <div class="row justify-content-center">
+            <div class="col-md-6">
+                <div class="card shadow">
+                    <div class="card-header bg-primary text-white">
+                        <h2 class="mb-0">🏥 Hospital Self-Registration (FR-1)</h2>
+                    </div>
+                    <div class="card-body">
+                        {% with messages = get_flashed_messages(with_categories=true) %}
+                            {% if messages %}
+                                <div class="mb-3">
+                                    {% for category, message in messages %}
+                                        <div class="alert alert-{{ 'danger' if category == 'danger' else 'success' }}" role="alert">{{ message }}</div>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+                        {% endwith %}
+                        <form method="POST">
+                            <div class="mb-3">
+                                <label for="name" class="form-label">Hospital Name:</label>
+                                <input type="text" class="form-control" id="name" name="name" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="license_number" class="form-label">License Number (Unique):</label>
+                                <input type="text" class="form-control" id="license_number" name="license_number" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="admin_email" class="form-label">Admin Email:</label>
+                                <input type="email" class="form-control" id="admin_email" name="admin_email" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="phone" class="form-label">Contact Phone:</label>
+                                <input type="tel" class="form-control" id="phone" name="phone" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="address" class="form-label">Address:</label>
+                                <input type="text" class="form-control" id="address" name="address" required>
+                            </div>
+                            <button type="submit" class="btn btn-success w-100">Register Hospital</button>
+                        </form>
+                        <p class="mt-3 text-center">Already registered? <a href="{{ url_for('auth.login') }}">Login here</a>.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+LOGIN_HTML = r"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>HMS Login</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <div class="container my-5">
+        <div class="row justify-content-center">
+            <div class="col-md-5">
+                <div class="card shadow">
+                    <div class="card-header bg-secondary text-white">
+                        <h2 class="mb-0">🔑 HMS Login</h2>
+                    </div>
+                    <div class="card-body">
+                        {% with messages = get_flashed_messages(with_categories=true) %}
+                            {% if messages %}
+                                <div class="mb-3">
+                                    {% for category, message in messages %}
+                                        <div class="alert alert-{{ 'danger' if category == 'danger' else 'success' }}" role="alert">{{ message }}</div>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+                        {% endwith %}
+                        <form method="POST">
+                            <div class="mb-3">
+                                <label for="email" class="form-label">Email Address:</label>
+                                <input type="email" class="form-control" id="email" name="email" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="password" class="form-label">Password:</label>
+                                <input type="password" class="form-control" id="password" name="password" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">Log In</button>
+                        </form>
+                        <p class="mt-3 text-center">New Hospital? <a href="{{ url_for('auth.register') }}">Register here</a>.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+# IMPORTANT CHANGE: Adding the Chatbot Widget Code before </body>
+DASHBOARD_HTML = r"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>HMS Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container my-5">
+        <h1>Welcome to the HMS Dashboard!</h1>
+        <p class="lead">This is a protected area. In a full implementation, you would see menus and content based on your role and permissions (RBAC).</p>
+        <div class="alert alert-info">
+            *Next Steps:* You now need to implement the full *OAuth2/JWT* flow (FR-3) and *Role-Based Access Control* (FR-4) to secure this page.
+        </div>
+        <a href="{{ url_for('auth.login') }}" class="btn btn-danger">Log Out (Placeholder)</a>
+    </div>
+
+    <!-- START OF PATIENT FAQ CHATBOT WIDGET -->
+    <!-- CHATBOT CODE: यह tawk.to विजेट कोड है जिसे आपने दिया है। -->
+    <!-- आपको '67890abcdef' की जगह अपना असली tawk.to ID डालना होगा। -->
+    <script type="text/javascript">
+    var Tawk_API = Tawk_API || {}, Tawk_LoadStart = new Date();
+    (function() {
+    var s1 = document.createElement("script"), s0 = document.getElementsByTagName("script")[0];
+    s1.async = true;
+    s1.src = 'https://embed.tawk.to/67890abcdef/default'; 
+    s1.charset = 'UTF-8';
+    s1.setAttribute('crossorigin', '*');
+    s0.parentNode.insertBefore(s1, s0);
+    })();
+    </script>
+    <!-- END OF PATIENT FAQ CHATBOT WIDGET -->
+
+</body>
+</html>
+"""
+
+# ----------------------------------------------------
+# 5. ROUTES (BLUEPRINT) - DEFINED BEFORE APP CREATION
+# ----------------------------------------------------
+# These functions MUST be defined before create_app() is called in _main_.
+
+@auth_bp.route('/register', methods=['GET', 'POST'])
+def register():
+    """Handles Hospital Self-Registration (FR-1)."""
+    if request.method == 'POST':
+        # 1. Get data 
+        name = request.form.get('name')
+        license_number = request.form.get('license_number')
+        admin_email = request.form.get('admin_email')
+        phone = request.form.get('phone')
+        address = request.form.get('address')
+        
+        # 2. Validate license number uniqueness
+        if Hospital.query.filter_by(license_number=license_number).first():
+            flash('License number is already registered.', 'danger')
+            return render_template_string(REGISTER_HTML)
+        
+        # 3. Auto-generate tenant ID (UUID-based) & create Hospital
+        tenant_id = str(uuid.uuid4())
+        new_hospital = Hospital(
+            id=tenant_id,
+            name=name,
+            license_number=license_number,
+            admin_email=admin_email,
+            address=address,
+            contact_details=phone,
+            status='PENDING' 
+        )
+        db.session.add(new_hospital)
+        
+        # 4. Create Admin Credentials automatically
+        admin_username = f"admin@{name.lower().replace(' ', '')}.hms" 
+        temp_password = 'TemporaryPass1!' 
+        
+        admin_user = User(
+            hospital_id=tenant_id,
+            first_name='Hospital',
+            last_name='Admin',
+            email=admin_email,
+            password_hash=generate_password_hash(temp_password)
+        )
+        db.session.add(admin_user)
+        
+        try:
+            db.session.commit()
+            flash('Registration successful! Please check your email for the activation link and temporary admin credentials.', 'success')
+            return redirect(url_for('auth.login'))
+        except Exception as e:
+            db.session.rollback()
+            flash(f'An error occurred during registration: {e}', 'danger')
+            return render_template_string(REGISTER_HTML)
+        
+    return render_template_string(REGISTER_HTML)
+
+@auth_bp.route('/login', methods=['GET', 'POST'])
+def login():
+    """Handles User Login."""
+    if request.method == 'POST':
+        email = request.form.get('email')
+        password = request.form.get('password')
+        
+        user = User.query.filter_by(email=email).first()
+        
+        if user and user.check_password(password):
+            # Placeholder for OAuth2/JWT Token generation
+            flash(f'Successfully logged in as {user.email}! (Tenant ID: {user.hospital_id})', 'success')
+            return redirect(url_for('dashboard'))
+        else:
+            flash('Invalid email or password.', 'danger')
+            
+    return render_template_string(LOGIN_HTML)
+
+# ----------------------------------------------------
+# 6. CORE APPLICATION ROUTES (HELPER FUNCTION)
+# ----------------------------------------------------
+# This function attaches routes to the main app instance.
+
+def register_app_routes(app_instance):
+    """Registers non-blueprint routes and middleware."""
+    
+    @app_instance.before_request
+    def before_request_func():
+        """Placeholder for the Multi-tenancy Context Adapter (FR-2)."""
+        # Middleware that handles cross-tenant data access prevention
+        pass
+
+    @app_instance.route('/')
+    def index():
+        return redirect(url_for('auth.login'))
+
+    @app_instance.route('/dashboard')
+    def dashboard():
+        """Sample protected route (requires login)."""
+        return render_template_string(DASHBOARD_HTML)
+
+
+# ----------------------------------------------------
+# 7. APP FACTORY
+# ----------------------------------------------------
+# This function is responsible for creating and configuring the app instance.
+
+def create_app():
+    app = Flask(_name_)
+    app.config.from_object(Config)
+    db.init_app(app)
+    
+    # 1. Register Blueprint (this is safe now that all routes are defined above)
+    app.register_blueprint(auth_bp, url_prefix='/auth')
+    
+    # 2. Register core app routes
+    register_app_routes(app)
+    
+    return app
+
+
+# ----------------------------------------------------
+# 8. EXECUTION BLOCK
+# ----------------------------------------------------
+if _name_ == '_main_':
+    print("Hospital Management System (HMS) - Initializing Single-File Flask App")
+    print("Database: sqlite:///hms_main.db")
+
+    # Create the application instance
+    app_instance = create_app()
+
+    with app_instance.app_context():
+        # Create database tables for the main metadata DB
+        db.create_all()
+        print("Database tables created/checked.")
+    
+    # Run the application
+    app_instance.run(debug=True)
