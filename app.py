@@ -1351,3 +1351,6 @@ if __name__ == '__main__':
 app = create_app()
 with app.app_context():
     db.create_all()
+    # Auto-initialize super admin on startup (verbose=False for production)
+    from create_superadmin import init_superadmin
+    init_superadmin(app, verbose=False)

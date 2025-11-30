@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 """
 Script to create a super admin user in the HMS database
+This runs automatically on app startup and can also be run manually.
 Usage: python create_superadmin.py
 """
 
@@ -8,21 +9,33 @@ from app import create_app, db, User, Hospital
 import uuid
 import sys
 
-def create_superadmin():
-    """Create a super admin user with test credentials"""
-    app = create_app()
+def init_superadmin(app=None, verbose=True):
+    """
+    Initialize super admin user with test credentials.
+    
+    Args:
+        app: Flask app instance (optional, creates one if not provided)
+        verbose: Print status messages (default: True)
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    if app is None:
+        app = create_app()
     
     with app.app_context():
         try:
             # Create all tables
             db.create_all()
-            print("✓ Database tables created/verified")
+            if verbose:
+                print("✓ Database tables created/verified")
             
             # Check if hospital exists
             hospital = Hospital.query.first()
             
             if not hospital:
-                print("Creating Test Hospital...")
+                if verbose:
+                    print("Creating Test Hospital...")
                 hospital = Hospital(
                     id=str(uuid.uuid4()),
                     name="Test Hospital",
@@ -34,20 +47,22 @@ def create_superadmin():
                 )
                 db.session.add(hospital)
                 db.session.commit()
-                print(f"✓ Hospital created: {hospital.name} (ID: {hospital.id})")
+                if verbose:
+                    print(f"✓ Hospital created: {hospital.name} (ID: {hospital.id})")
             else:
-                print(f"✓ Using existing hospital: {hospital.name}")
+                if verbose:
+                    print(f"✓ Using existing hospital: {hospital.name}")
             
             # Check if user already exists
             existing_user = User.query.filter_by(email="superadmin@test.com").first()
             
             if existing_user:
-                print("User already exists. Updating password...")
-                existing_user.set_password("Test@123")
-                db.session.commit()
-                print("✓ Password updated successfully")
+                if verbose:
+                    print("✓ User 'superadmin@test.com' already exists. Skipping insertion.")
+                return True
             else:
-                print("Creating super admin user...")
+                if verbose:
+                    print("Creating super admin user...")
                 super_admin = User(
                     hospital_id=hospital.id,
                     first_name="Super",
@@ -57,25 +72,26 @@ def create_superadmin():
                 super_admin.set_password("Test@123")
                 db.session.add(super_admin)
                 db.session.commit()
-                print("✓ Super admin user created successfully")
+                if verbose:
+                    print("✓ Super admin user created successfully")
             
-            # Print credentials
-            print("\n" + "="*50)
-            print("LOGIN CREDENTIALS")
-            print("="*50)
-            print(f"Email:    superadmin@test.com")
-            print(f"Password: Test@123")
-            print("="*50)
-            print("\nYou can now login at: http://127.0.0.1:5000/auth/login")
-            print("="*50 + "\n")
+            # Print credentials only if verbose
+            if verbose:
+                print("\n" + "="*50)
+                print("LOGIN CREDENTIALS")
+                print("="*50)
+                print(f"Email:    superadmin@test.com")
+                print(f"Password: Test@123")
+                print("="*50 + "\n")
             
             return True
             
         except Exception as e:
-            print(f"✗ Error: {str(e)}", file=sys.stderr)
+            if verbose:
+                print(f"✗ Error: {str(e)}", file=sys.stderr)
             db.session.rollback()
             return False
 
 if __name__ == '__main__':
-    success = create_superadmin()
+    success = init_superadmin()
     sys.exit(0 if success else 1)
