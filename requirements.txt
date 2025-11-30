@@ -1,6 +1,7 @@
-Flask==3.0.0
-Flask-SQLAlchemy==3.1.1
-SQLAlchemy==2.0.23
-Werkzeug==3.0.1
-gunicorn==21.2.0
-python-dotenv==1.0.0
+Flask==3.0.3
+Flask-SQLAlchemy==3.2.1
+SQLAlchemy>=2.1.0rc2
+Werkzeug==3.1.2
+gunicorn==23.0.0
+python-dotenv==1.0.1
+
