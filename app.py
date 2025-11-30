@@ -13,8 +13,12 @@ from datetime import datetime
 # 1. Configuration 
 # ----------------------------------------------------
 class Config:
-    # Using SQLite for simplicity in this single-file example
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or 'sqlite:///hms_main.db'
+    # Support both SQLite (local) and PostgreSQL (Render)
+    database_url = os.environ.get('DATABASE_URL')
+    if database_url and database_url.startswith('postgres://'):
+        # Fix Render's deprecated postgres:// scheme
+        database_url = database_url.replace('postgres://', 'postgresql://', 1)
+    SQLALCHEMY_DATABASE_URI = database_url or 'sqlite:///hms_main.db'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'your_super_secret_key_change_me_in_production'
     JWT_SECRET_KEY = "jwt-secret-key" 
